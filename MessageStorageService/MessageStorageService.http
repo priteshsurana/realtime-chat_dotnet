@@ -1,0 +1,6 @@
+@MessageStorageService_HostAddress = http://localhost:5220
+
+GET {{MessageStorageService_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
