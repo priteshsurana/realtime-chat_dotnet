@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NotificationService", "Noti
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MessageStorageService", "MessageStorageService\MessageStorageService.csproj", "{77658B59-ECB7-40F2-B83D-0E8C3E899156}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared", "Shared\Shared.csproj", "{F27EAC9A-D2A1-4A54-83FF-338E88DBE8F7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -42,5 +44,9 @@ Global
 		{77658B59-ECB7-40F2-B83D-0E8C3E899156}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{77658B59-ECB7-40F2-B83D-0E8C3E899156}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{77658B59-ECB7-40F2-B83D-0E8C3E899156}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F27EAC9A-D2A1-4A54-83FF-338E88DBE8F7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F27EAC9A-D2A1-4A54-83FF-338E88DBE8F7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F27EAC9A-D2A1-4A54-83FF-338E88DBE8F7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F27EAC9A-D2A1-4A54-83FF-338E88DBE8F7}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

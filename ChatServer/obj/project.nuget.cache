@@ -1,9 +1,11 @@
 {
   "version": 2,
-  "dgSpecHash": "dotUKrYPf88=",
+  "dgSpecHash": "xnqFmLWGBKM=",
   "success": true,
   "projectFilePath": "/Users/priteshsurana/Documents/Projects/personal_innovation/RealTimeChatApp/ChatServer/ChatServer.csproj",
   "expectedPackageFiles": [
+    "/Users/priteshsurana/.nuget/packages/confluent.kafka/2.10.0/confluent.kafka.2.10.0.nupkg.sha512",
+    "/Users/priteshsurana/.nuget/packages/librdkafka.redist/2.10.0/librdkafka.redist.2.10.0.nupkg.sha512",
     "/Users/priteshsurana/.nuget/packages/microsoft.aspnetcore.openapi/9.0.4/microsoft.aspnetcore.openapi.9.0.4.nupkg.sha512",
     "/Users/priteshsurana/.nuget/packages/microsoft.openapi/1.6.17/microsoft.openapi.1.6.17.nupkg.sha512"
   ],
