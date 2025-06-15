@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MessageStorageService", "Me
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared", "Shared\Shared.csproj", "{F27EAC9A-D2A1-4A54-83FF-338E88DBE8F7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProfileService", "ProfileService\ProfileService.csproj", "{B4780A89-AF56-4584-9617-C33A9111E55F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -48,5 +50,9 @@ Global
 		{F27EAC9A-D2A1-4A54-83FF-338E88DBE8F7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F27EAC9A-D2A1-4A54-83FF-338E88DBE8F7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F27EAC9A-D2A1-4A54-83FF-338E88DBE8F7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B4780A89-AF56-4584-9617-C33A9111E55F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B4780A89-AF56-4584-9617-C33A9111E55F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B4780A89-AF56-4584-9617-C33A9111E55F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B4780A89-AF56-4584-9617-C33A9111E55F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
