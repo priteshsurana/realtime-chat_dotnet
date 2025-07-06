@@ -1,0 +1,1226 @@
+MCP .NET Server for GitHub Operations
+Project Structure
+GitHubMCPServer/
+├── GitHubMCPServer.csproj
+├── Program.cs
+├── Models/
+│   ├── MCPModels.cs
+│   └── GitHubModels.cs
+├── Services/
+│   ├── GitHubService.cs
+│   ├── GitService.cs
+│   ├── ProjectService.cs
+│   └── BuildService.cs
+├── Handlers/
+│   └── MCPHandler.cs
+├── appsettings.json
+└── appsettings.Development.json
+1. Project File (GitHubMCPServer.csproj)
+xml<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
+    <PackageReference Include="LibGit2Sharp" Version="0.29.0" />
+    <PackageReference Include="Octokit" Version="9.0.0" />
+    <PackageReference Include="System.Text.Json" Version="8.0.4" />
+    <PackageReference Include="System.Xml.Linq" Version="4.3.0" />
+  </ItemGroup>
+
+</Project>
+2. Configuration (appsettings.json)
+json{
+  "GitHub": {
+    "Username": "your-github-username",
+    "Token": "your-github-personal-access-token"
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.Hosting.Lifetime": "Information"
+    }
+  },
+  "WorkingDirectory": "./repos"
+}
+3. Models (Models/MCPModels.cs)
+csharpusing System.Text.Json.Serialization;
+
+namespace GitHubMCPServer.Models;
+
+public class MCPRequest
+{
+    [JsonPropertyName("jsonrpc")]
+    public string JsonRpc { get; set; } = "2.0";
+
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("method")]
+    public string Method { get; set; } = string.Empty;
+
+    [JsonPropertyName("params")]
+    public object? Params { get; set; }
+}
+
+public class MCPResponse
+{
+    [JsonPropertyName("jsonrpc")]
+    public string JsonRpc { get; set; } = "2.0";
+
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("result")]
+    public object? Result { get; set; }
+
+    [JsonPropertyName("error")]
+    public MCPError? Error { get; set; }
+}
+
+public class MCPError
+{
+    [JsonPropertyName("code")]
+    public int Code { get; set; }
+
+    [JsonPropertyName("message")]
+    public string Message { get; set; } = string.Empty;
+
+    [JsonPropertyName("data")]
+    public object? Data { get; set; }
+}
+
+public class ToolDefinition
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = string.Empty;
+
+    [JsonPropertyName("inputSchema")]
+    public object InputSchema { get; set; } = new();
+}
+
+public class ToolCallParams
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("arguments")]
+    public Dictionary<string, object> Arguments { get; set; } = new();
+}
+
+public class ToolResult
+{
+    [JsonPropertyName("content")]
+    public List<ToolContent> Content { get; set; } = new();
+
+    [JsonPropertyName("isError")]
+    public bool IsError { get; set; }
+}
+
+public class ToolContent
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "text";
+
+    [JsonPropertyName("text")]
+    public string Text { get; set; } = string.Empty;
+}
+4. GitHub Models (Models/GitHubModels.cs)
+csharpnamespace GitHubMCPServer.Models;
+
+public class GitHubConfig
+{
+    public string Username { get; set; } = string.Empty;
+    public string Token { get; set; } = string.Empty;
+}
+
+public class CloneRepoRequest
+{
+    public string RepoName { get; set; } = string.Empty;
+}
+
+public class CreateBranchRequest
+{
+    public string BranchName { get; set; } = string.Empty;
+}
+
+public class UpdatePackageRequest
+{
+    public string PackageName { get; set; } = string.Empty;
+    public string PackageVersion { get; set; } = string.Empty;
+}
+
+public class BuildResult
+{
+    public bool Success { get; set; }
+    public string Output { get; set; } = string.Empty;
+    public string Error { get; set; } = string.Empty;
+    public int ExitCode { get; set; }
+}
+
+public class CommitResult
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string CommitSha { get; set; } = string.Empty;
+}
+5. GitHub Service (Services/GitHubService.cs)
+csharpusing GitHubMCPServer.Models;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Octokit;
+
+namespace GitHubMCPServer.Services;
+
+public class GitHubService
+{
+    private readonly GitHubClient _client;
+    private readonly GitHubConfig _config;
+    private readonly ILogger<GitHubService> _logger;
+
+    public GitHubService(IConfiguration configuration, ILogger<GitHubService> logger)
+    {
+        _logger = logger;
+        _config = configuration.GetSection("GitHub").Get<GitHubConfig>() ?? new GitHubConfig();
+        
+        _client = new GitHubClient(new ProductHeaderValue("MCP-GitHub-Server"))
+        {
+            Credentials = new Credentials(_config.Token)
+        };
+    }
+
+    public async Task<Repository> GetRepositoryAsync(string repoName)
+    {
+        try
+        {
+            return await _client.Repository.Get(_config.Username, repoName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get repository {RepoName}", repoName);
+            throw;
+        }
+    }
+
+    public async Task<bool> RepositoryExistsAsync(string repoName)
+    {
+        try
+        {
+            await GetRepositoryAsync(repoName);
+            return true;
+        }
+        catch (NotFoundException)
+        {
+            return false;
+        }
+    }
+}
+6. Git Service (Services/GitService.cs)
+csharpusing GitHubMCPServer.Models;
+using LibGit2Sharp;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+
+namespace GitHubMCPServer.Services;
+
+public class GitService
+{
+    private readonly GitHubConfig _config;
+    private readonly ILogger<GitService> _logger;
+    private readonly string _workingDirectory;
+
+    public GitService(IConfiguration configuration, ILogger<GitService> logger)
+    {
+        _logger = logger;
+        _config = configuration.GetSection("GitHub").Get<GitHubConfig>() ?? new GitHubConfig();
+        _workingDirectory = configuration["WorkingDirectory"] ?? "./repos";
+        
+        Directory.CreateDirectory(_workingDirectory);
+    }
+
+    public async Task<string> CloneRepositoryAsync(string repoName)
+    {
+        var repoPath = Path.Combine(_workingDirectory, repoName);
+        var cloneUrl = $"https://github.com/{_config.Username}/{repoName}.git";
+
+        try
+        {
+            if (Directory.Exists(repoPath))
+            {
+                _logger.LogInformation("Repository {RepoName} already exists, pulling latest changes", repoName);
+                using var repo = new Repository(repoPath);
+                var remote = repo.Network.Remotes["origin"];
+                var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
+                Commands.Fetch(repo, remote.Name, refSpecs, new FetchOptions
+                {
+                    CredentialsProvider = (_url, _user, _cred) => new UsernamePasswordCredentials
+                    {
+                        Username = _config.Username,
+                        Password = _config.Token
+                    }
+                }, "");
+                
+                // Reset to origin/main or origin/master
+                var originBranch = repo.Branches["origin/main"] ?? repo.Branches["origin/master"];
+                if (originBranch != null)
+                {
+                    repo.Reset(ResetMode.Hard, originBranch.Tip);
+                }
+            }
+            else
+            {
+                _logger.LogInformation("Cloning repository {RepoName} to {RepoPath}", repoName, repoPath);
+                Repository.Clone(cloneUrl, repoPath, new CloneOptions
+                {
+                    CredentialsProvider = (_url, _user, _cred) => new UsernamePasswordCredentials
+                    {
+                        Username = _config.Username,
+                        Password = _config.Token
+                    }
+                });
+            }
+
+            return repoPath;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to clone repository {RepoName}", repoName);
+            throw;
+        }
+    }
+
+    public async Task<string> CreateFeatureBranchAsync(string repoPath, string branchName)
+    {
+        try
+        {
+            using var repo = new Repository(repoPath);
+            
+            // Check if branch already exists
+            var existingBranch = repo.Branches[branchName];
+            if (existingBranch != null)
+            {
+                _logger.LogInformation("Branch {BranchName} already exists, switching to it", branchName);
+                Commands.Checkout(repo, existingBranch);
+                return branchName;
+            }
+
+            var mainBranch = repo.Branches["main"] ?? repo.Branches["master"];
+            if (mainBranch == null)
+            {
+                throw new InvalidOperationException("Could not find main or master branch");
+            }
+
+            var newBranch = repo.CreateBranch(branchName, mainBranch.Tip);
+            Commands.Checkout(repo, newBranch);
+            
+            _logger.LogInformation("Created and switched to branch {BranchName}", branchName);
+            return branchName;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create feature branch {BranchName}", branchName);
+            throw;
+        }
+    }
+
+    public async Task<CommitResult> CommitAndPushChangesAsync(string repoPath, string message)
+    {
+        try
+        {
+            using var repo = new Repository(repoPath);
+            
+            // Stage all changes
+            Commands.Stage(repo, "*");
+            
+            // Check if there are any changes to commit
+            var status = repo.RetrieveStatus();
+            if (!status.IsDirty)
+            {
+                return new CommitResult
+                {
+                    Success = true,
+                    Message = "No changes to commit"
+                };
+            }
+
+            // Create signature
+            var signature = new Signature(_config.Username, $"{_config.Username}@users.noreply.github.com", DateTimeOffset.Now);
+            
+            // Commit changes
+            var commit = repo.Commit(message, signature, signature);
+            
+            // Push changes
+            var currentBranch = repo.Head;
+            var remote = repo.Network.Remotes["origin"];
+            
+            repo.Network.Push(currentBranch, new PushOptions
+            {
+                CredentialsProvider = (_url, _user, _cred) => new UsernamePasswordCredentials
+                {
+                    Username = _config.Username,
+                    Password = _config.Token
+                }
+            });
+
+            return new CommitResult
+            {
+                Success = true,
+                Message = $"Committed and pushed changes to branch {currentBranch.FriendlyName}",
+                CommitSha = commit.Sha
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to commit and push changes");
+            return new CommitResult
+            {
+                Success = false,
+                Message = ex.Message
+            };
+        }
+    }
+
+    public string? GetCurrentRepository()
+    {
+        var repos = Directory.GetDirectories(_workingDirectory);
+        return repos.LastOrDefault(); // Return the most recently cloned/accessed repo
+    }
+}
+7. Project Service (Services/ProjectService.cs)
+csharpusing Microsoft.Extensions.Logging;
+using System.Xml.Linq;
+
+namespace GitHubMCPServer.Services;
+
+public class ProjectService
+{
+    private readonly ILogger<ProjectService> _logger;
+
+    public ProjectService(ILogger<ProjectService> logger)
+    {
+        _logger = logger;
+    }
+
+    public async Task<List<string>> FindProjectFilesAsync(string repoPath)
+    {
+        var projectFiles = new List<string>();
+        
+        try
+        {
+            var csprojFiles = Directory.GetFiles(repoPath, "*.csproj", SearchOption.AllDirectories);
+            var fsprojFiles = Directory.GetFiles(repoPath, "*.fsproj", SearchOption.AllDirectories);
+            var vbprojFiles = Directory.GetFiles(repoPath, "*.vbproj", SearchOption.AllDirectories);
+            
+            projectFiles.AddRange(csprojFiles);
+            projectFiles.AddRange(fsprojFiles);
+            projectFiles.AddRange(vbprojFiles);
+            
+            _logger.LogInformation("Found {Count} project files in {RepoPath}", projectFiles.Count, repoPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to find project files in {RepoPath}", repoPath);
+        }
+
+        return projectFiles;
+    }
+
+    public async Task<bool> UpdatePackageVersionAsync(string projectFile, string packageName, string newVersion)
+    {
+        try
+        {
+            var doc = XDocument.Load(projectFile);
+            var packageReferences = doc.Descendants("PackageReference")
+                .Where(pr => pr.Attribute("Include")?.Value == packageName);
+
+            bool updated = false;
+            foreach (var packageRef in packageReferences)
+            {
+                var versionAttr = packageRef.Attribute("Version");
+                if (versionAttr != null)
+                {
+                    var oldVersion = versionAttr.Value;
+                    versionAttr.Value = newVersion;
+                    updated = true;
+                    _logger.LogInformation("Updated {PackageName} from {OldVersion} to {NewVersion} in {ProjectFile}", 
+                        packageName, oldVersion, newVersion, Path.GetFileName(projectFile));
+                }
+            }
+
+            if (updated)
+            {
+                doc.Save(projectFile);
+            }
+
+            return updated;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update package {PackageName} in {ProjectFile}", packageName, projectFile);
+            return false;
+        }
+    }
+
+    public async Task<int> UpdatePackageInAllProjectsAsync(string repoPath, string packageName, string newVersion)
+    {
+        var projectFiles = await FindProjectFilesAsync(repoPath);
+        int updatedCount = 0;
+
+        foreach (var projectFile in projectFiles)
+        {
+            if (await UpdatePackageVersionAsync(projectFile, packageName, newVersion))
+            {
+                updatedCount++;
+            }
+        }
+
+        _logger.LogInformation("Updated package {PackageName} to version {NewVersion} in {UpdatedCount} out of {TotalCount} projects", 
+            packageName, newVersion, updatedCount, projectFiles.Count);
+
+        return updatedCount;
+    }
+}
+8. Build Service (Services/BuildService.cs)
+csharpusing GitHubMCPServer.Models;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+
+namespace GitHubMCPServer.Services;
+
+public class BuildService
+{
+    private readonly ILogger<BuildService> _logger;
+
+    public BuildService(ILogger<BuildService> logger)
+    {
+        _logger = logger;
+    }
+
+    public async Task<BuildResult> BuildSolutionAsync(string repoPath)
+    {
+        try
+        {
+            // Look for solution files first, then project files
+            var solutionFiles = Directory.GetFiles(repoPath, "*.sln", SearchOption.TopDirectoryOnly);
+            var targetPath = solutionFiles.FirstOrDefault() ?? repoPath;
+
+            _logger.LogInformation("Building solution at {TargetPath}", targetPath);
+
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = $"build \"{targetPath}\"",
+                WorkingDirectory = repoPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = new Process { StartInfo = processStartInfo };
+            var outputBuilder = new StringBuilder();
+            var errorBuilder = new StringBuilder();
+
+            process.OutputDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    outputBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.ErrorDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    errorBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            await process.WaitForExitAsync();
+
+            var result = new BuildResult
+            {
+                Success = process.ExitCode == 0,
+                Output = outputBuilder.ToString(),
+                Error = errorBuilder.ToString(),
+                ExitCode = process.ExitCode
+            };
+
+            _logger.LogInformation("Build completed with exit code {ExitCode}", process.ExitCode);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to build solution");
+            return new BuildResult
+            {
+                Success = false,
+                Error = ex.Message,
+                ExitCode = -1
+            };
+        }
+    }
+}
+9. MCP Handler (Handlers/MCPHandler.cs)
+csharpusing GitHubMCPServer.Models;
+using GitHubMCPServer.Services;
+using Microsoft.Extensions.Logging;
+using System.Text.Json;
+
+namespace GitHubMCPServer.Handlers;
+
+public class MCPHandler
+{
+    private readonly GitHubService _gitHubService;
+    private readonly GitService _gitService;
+    private readonly ProjectService _projectService;
+    private readonly BuildService _buildService;
+    private readonly ILogger<MCPHandler> _logger;
+    private string? _currentRepoPath;
+
+    public MCPHandler(
+        GitHubService gitHubService,
+        GitService gitService,
+        ProjectService projectService,
+        BuildService buildService,
+        ILogger<MCPHandler> logger)
+    {
+        _gitHubService = gitHubService;
+        _gitService = gitService;
+        _projectService = projectService;
+        _buildService = buildService;
+        _logger = logger;
+    }
+
+    public async Task<MCPResponse> HandleRequestAsync(MCPRequest request)
+    {
+        try
+        {
+            return request.Method switch
+            {
+                "tools/list" => await HandleToolsListAsync(request),
+                "tools/call" => await HandleToolCallAsync(request),
+                _ => CreateErrorResponse(request.Id, -32601, "Method not found")
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling MCP request");
+            return CreateErrorResponse(request.Id, -32603, "Internal error", ex.Message);
+        }
+    }
+
+    private async Task<MCPResponse> HandleToolsListAsync(MCPRequest request)
+    {
+        var tools = new List<ToolDefinition>
+        {
+            new()
+            {
+                Name = "clone_repo",
+                Description = "Clone a GitHub repository",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        repoName = new { type = "string", description = "Name of the repository to clone" }
+                    },
+                    required = new[] { "repoName" }
+                }
+            },
+            new()
+            {
+                Name = "create_branch",
+                Description = "Create a new feature branch",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        branchName = new { type = "string", description = "Name of the branch to create" }
+                    },
+                    required = new[] { "branchName" }
+                }
+            },
+            new()
+            {
+                Name = "update_package",
+                Description = "Update a NuGet package version in all project files",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        packageName = new { type = "string", description = "Name of the package to update" },
+                        packageVersion = new { type = "string", description = "New version of the package" }
+                    },
+                    required = new[] { "packageName", "packageVersion" }
+                }
+            },
+            new()
+            {
+                Name = "build_solution",
+                Description = "Build the current solution",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new { },
+                    required = new string[] { }
+                }
+            },
+            new()
+            {
+                Name = "commit_and_push",
+                Description = "Commit and push changes to the current branch",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        message = new { type = "string", description = "Commit message" }
+                    },
+                    required = new[] { "message" }
+                }
+            }
+        };
+
+        return new MCPResponse
+        {
+            Id = request.Id,
+            Result = new { tools }
+        };
+    }
+
+    private async Task<MCPResponse> HandleToolCallAsync(MCPRequest request)
+    {
+        var paramsJson = JsonSerializer.Serialize(request.Params);
+        var toolCall = JsonSerializer.Deserialize<ToolCallParams>(paramsJson);
+
+        if (toolCall == null)
+        {
+            return CreateErrorResponse(request.Id, -32602, "Invalid params");
+        }
+
+        var result = toolCall.Name switch
+        {
+            "clone_repo" => await HandleCloneRepoAsync(toolCall.Arguments),
+            "create_branch" => await HandleCreateBranchAsync(toolCall.Arguments),
+            "update_package" => await HandleUpdatePackageAsync(toolCall.Arguments),
+            "build_solution" => await HandleBuildSolutionAsync(toolCall.Arguments),
+            "commit_and_push" => await HandleCommitAndPushAsync(toolCall.Arguments),
+            _ => new ToolResult
+            {
+                IsError = true,
+                Content = new List<ToolContent>
+                {
+                    new() { Text = $"Unknown tool: {toolCall.Name}" }
+                }
+            }
+        };
+
+        return new MCPResponse
+        {
+            Id = request.Id,
+            Result = result
+        };
+    }
+
+    private async Task<ToolResult> HandleCloneRepoAsync(Dictionary<string, object> arguments)
+    {
+        try
+        {
+            if (!arguments.TryGetValue("repoName", out var repoNameObj) || repoNameObj is not JsonElement repoNameElement)
+            {
+                return CreateErrorResult("Missing or invalid repoName parameter");
+            }
+
+            var repoName = repoNameElement.GetString();
+            if (string.IsNullOrEmpty(repoName))
+            {
+                return CreateErrorResult("Repository name cannot be empty");
+            }
+
+            // Check if repository exists
+            if (!await _gitHubService.RepositoryExistsAsync(repoName))
+            {
+                return CreateErrorResult($"Repository '{repoName}' not found or not accessible");
+            }
+
+            _currentRepoPath = await _gitService.CloneRepositoryAsync(repoName);
+
+            return new ToolResult
+            {
+                Content = new List<ToolContent>
+                {
+                    new() { Text = $"Successfully cloned repository '{repoName}' to {_currentRepoPath}" }
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            return CreateErrorResult($"Failed to clone repository: {ex.Message}");
+        }
+    }
+
+    private async Task<ToolResult> HandleCreateBranchAsync(Dictionary<string, object> arguments)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(_currentRepoPath))
+            {
+                return CreateErrorResult("No repository is currently active. Please clone a repository first.");
+            }
+
+            if (!arguments.TryGetValue("branchName", out var branchNameObj) || branchNameObj is not JsonElement branchNameElement)
+            {
+                return CreateErrorResult("Missing or invalid branchName parameter");
+            }
+
+            var branchName = branchNameElement.GetString();
+            if (string.IsNullOrEmpty(branchName))
+            {
+                return CreateErrorResult("Branch name cannot be empty");
+            }
+
+            var createdBranch = await _gitService.CreateFeatureBranchAsync(_currentRepoPath, branchName);
+
+            return new ToolResult
+            {
+                Content = new List<ToolContent>
+                {
+                    new() { Text = $"Successfully created and switched to branch '{createdBranch}'" }
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            return CreateErrorResult($"Failed to create branch: {ex.Message}");
+        }
+    }
+
+    private async Task<ToolResult> HandleUpdatePackageAsync(Dictionary<string, object> arguments)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(_currentRepoPath))
+            {
+                return CreateErrorResult("No repository is currently active. Please clone a repository first.");
+            }
+
+            if (!arguments.TryGetValue("packageName", out var packageNameObj) || packageNameObj is not JsonElement packageNameElement ||
+                !arguments.TryGetValue("packageVersion", out var packageVersionObj) || packageVersionObj is not JsonElement packageVersionElement)
+            {
+                return CreateErrorResult("Missing or invalid packageName or packageVersion parameters");
+            }
+
+            var packageName = packageNameElement.GetString();
+            var packageVersion = packageVersionElement.GetString();
+
+            if (string.IsNullOrEmpty(packageName) || string.IsNullOrEmpty(packageVersion))
+            {
+                return CreateErrorResult("Package name and version cannot be empty");
+            }
+
+            var updatedCount = await _projectService.UpdatePackageInAllProjectsAsync(_currentRepoPath, packageName, packageVersion);
+
+            return new ToolResult
+            {
+                Content = new List<ToolContent>
+                {
+                    new() { Text = $"Updated package '{packageName}' to version '{packageVersion}' in {updatedCount} project(s)" }
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            return CreateErrorResult($"Failed to update package: {ex.Message}");
+        }
+    }
+
+    private async Task<ToolResult> HandleBuildSolutionAsync(Dictionary<string, object> arguments)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(_currentRepoPath))
+            {
+                return CreateErrorResult("No repository is currently active. Please clone a repository first.");
+            }
+
+            var buildResult = await _buildService.BuildSolutionAsync(_currentRepoPath);
+
+            var resultText = buildResult.Success 
+                ? $"✅ Build successful!\n\nOutput:\n{buildResult.Output}"
+                : $"❌ Build failed with exit code {buildResult.ExitCode}\n\nOutput:\n{buildResult.Output}\n\nErrors:\n{buildResult.Error}";
+
+            return new ToolResult
+            {
+                IsError = !buildResult.Success,
+                Content = new List<ToolContent>
+                {
+                    new() { Text = resultText }
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            return CreateErrorResult($"Failed to build solution: {ex.Message}");
+        }
+    }
+
+    private async Task<ToolResult> HandleCommitAndPushAsync(Dictionary<string, object> arguments)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(_currentRepoPath))
+            {
+                return CreateErrorResult("No repository is currently active. Please clone a repository first.");
+            }
+
+            if (!arguments.TryGetValue("message", out var messageObj) || messageObj is not JsonElement messageElement)
+            {
+                return CreateErrorResult("Missing or invalid message parameter");
+            }
+
+            var message = messageElement.GetString();
+            if (string.IsNullOrEmpty(message))
+            {
+                return CreateErrorResult("Commit message cannot be empty");
+            }
+
+            var commitResult = await _gitService.CommitAndPushChangesAsync(_currentRepoPath, message);
+
+            return new ToolResult
+            {
+                IsError = !commitResult.Success,
+                Content = new List<ToolContent>
+                {
+                    new() { Text = commitResult.Success ? $"✅ {commitResult.Message}" : $"❌ {commitResult.Message}" }
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            return CreateErrorResult($"Failed to commit and push: {ex.Message}");
+        }
+    }
+
+    private static ToolResult CreateErrorResult(string message)
+    {
+        return new ToolResult
+        {
+            IsError = true,
+            Content = new List<ToolContent>
+            {
+                new() { Text = message }
+            }
+        };
+    }
+
+    private static MCPResponse CreateErrorResponse(string id, int code, string message, string? data = null)
+    {
+        return new MCPResponse
+        {
+            Id = id,
+            Error = new MCPError
+            {
+                Code = code,
+                Message = message,
+                Data = data
+            }
+        };
+    }
+}
+10. Main Program (Program.cs)
+csharpusing GitHubMCPServer.Handlers;
+using GitHubMCPServer.Models;
+using GitHubMCPServer.Services;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using System.Text.Json;
+
+namespace GitHubMCPServer;
+
+public class Program
+{
+    public static async Task Main(string[] args)
+    {
+        var host = CreateHostBuilder(args).Build();
+        var mcpServer = host.Services.GetRequiredService<MCPServer>();
+        await mcpServer.RunAsync();
+    }
+
+    private static IHostBuilder CreateHostBuilder(string[] args) =>
+        Host.CreateDefaultBuilder(args)
+            .ConfigureAppConfiguration((context, config) =>
+            {
+                config.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+                config.AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", optional: true);
+                config.AddEnvironmentVariables();
+            })
+            .ConfigureServices((context, services) =>
+            {
+                services.AddSingleton<GitHubService>();
+                services.AddSingleton<GitService>();
+                services.AddSingleton<ProjectService>();
+                services.AddSingleton<BuildService>();
+                services.AddSingleton<MCPHandler>();
+                services.AddSingleton<MCPServer>();
+            })
+            .ConfigureLogging(logging =>
+            {
+                logging.ClearProviders();
+                logging.AddConsole();
+                logging.SetMinimumLevel(LogLevel.Information);
+            });
+}
+
+public class MCPServer
+{
+    private readonly MCPHandler _handler;
+    private readonly ILogger<MCPServer> _logger;
+
+    public MCPServer(MCPHandler handler, ILogger<MCPServer> logger)
+    {
+        _handler = handler;
+        _logger = logger;
+    }
+
+    public async Task RunAsync()
+    {
+        _logger.LogInformation("Starting MCP Server...");
+        
+        // Send server info
+        await SendServerInfoAsync();
+        
+        // Main message loop
+        while (true)
+        {
+            try
+            {
+                var input = await Console.In.ReadLineAsync();
+                if (string.IsNullOrEmpty(input))
+                    continue;
+
+                var request = JsonSerializer.Deserialize<MCPRequest>(input);
+                if (request == null)
+                    continue;
+
+                var response = await _handler.HandleRequestAsync(request);
+                var responseJson = JsonSerializer.Serialize(response);
+                
+                await Console.Out.WriteLineAsync(responseJson);
+                await Console.Out.FlushAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing request");
+            }
+        }
+    }
+
+    private async Task SendServerInfoAsync()
+    {
+        var serverInfo = new
+        {
+            jsonrpc = "2.0",
+            id = "server-info",
+            result = new
+            {
+                protocolVersion = "2024-11-05",
+                capabilities = new
+                {
+                    tools = new { }
+                },
+                serverInfo = new
+                {
+                    name = "GitHub MCP Server",
+                    version = "1.0.0"
+                }
+            }
+        };
+
+        var json = JsonSerializer.Serialize(serverInfo);
+        await Console.Out.WriteLineAsync(json);
+        await Console.Out.FlushAsync();
+    }
+}
+11. Setup Instructions
+Prerequisites
+
+.NET 8.0 SDK installed on your machine
+Git installed and configured
+GitHub Personal Access Token with repository permissions
+Visual Studio Code or Visual Studio with MCP extension
+
+Step-by-Step Setup
+1. Create the Project
+bashmkdir GitHubMCPServer
+cd GitHubMCPServer
+dotnet new console
+2. Install Required Packages
+bashdotnet add package Microsoft.Extensions.Configuration
+dotnet add package Microsoft.Extensions.Configuration.Json
+dotnet add package Microsoft.Extensions.DependencyInjection
+dotnet add package Microsoft.Extensions.Hosting
+dotnet add package Microsoft.Extensions.Logging
+dotnet add package LibGit2Sharp
+dotnet add package Octokit
+dotnet add package System.Text.Json
+dotnet add package System.Xml.Linq
+3. Configure GitHub Credentials
+Update your appsettings.json:
+json{
+  "GitHub": {
+    "Username": "your-actual-github-username",
+    "Token": "ghp_your_personal_access_token_here"
+  },
+  "WorkingDirectory": "./repos",
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information"
+    }
+  }
+}
+To create a GitHub Personal Access Token:
+
+Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+Click "Generate new token (classic)"
+Select scopes: repo, workflow, write:packages, delete:packages
+Copy the token and paste it in your appsettings.json
+
+4. Build and Test the Server
+bashdotnet build
+dotnet run
+5. Configure MCP Client (VS Code with Copilot)
+Create or update your MCP configuration file:
+Windows: %APPDATA%\Code\User\globalStorage\github.copilot-chat\mcp-servers.json
+macOS: ~/Library/Application Support/Code/User/globalStorage/github.copilot-chat/mcp-servers.json
+Linux: ~/.config/Code/User/globalStorage/github.copilot-chat/mcp-servers.json
+json{
+  "mcpServers": {
+    "github-operations": {
+      "command": "dotnet",
+      "args": ["run", "--project", "/path/to/your/GitHubMCPServer"],
+      "env": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
+12. Usage Examples
+Once configured, you can use the following commands in GitHub Copilot Chat:
+Example Conversation Flow:
+You: clone MyAwesomeProject
+Copilot: I'll clone the MyAwesomeProject repository for you.
+✅ Successfully cloned repository 'MyAwesomeProject'
+
+You: create a feature branch feature/update-dependencies
+Copilot: I'll create a new feature branch called 'feature/update-dependencies'.
+✅ Successfully created and switched to branch 'feature/update-dependencies'
+
+You: update package Newtonsoft.Json to 13.0.3
+Copilot: I'll update the Newtonsoft.Json package to version 13.0.3 in all project files.
+✅ Updated package 'Newtonsoft.Json' to version '13.0.3' in 3 project(s)
+
+You: build
+Copilot: I'll build the solution now.
+✅ Build successful!
+
+You: commit and push with message "Updated Newtonsoft.Json to 13.0.3"
+Copilot: I'll commit and push the changes.
+✅ Committed and pushed changes to branch feature/update-dependencies
+13. Advanced Configuration
+Environment Variables Support
+You can also configure the server using environment variables:
+bashexport GitHub__Username="your-username"
+export GitHub__Token="your-token"
+export WorkingDirectory="/custom/path/repos"
+Docker Support
+Create a Dockerfile:
+dockerfileFROM mcr.microsoft.com/dotnet/runtime:8.0 AS base
+WORKDIR /app
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY ["GitHubMCPServer.csproj", "."]
+RUN dotnet restore "./GitHubMCPServer.csproj"
+COPY . .
+WORKDIR "/src/."
+RUN dotnet build "GitHubMCPServer.csproj" -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish "GitHubMCPServer.csproj" -c Release -o /app/publish
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+
+# Install git
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["dotnet", "GitHubMCPServer.dll"]
+Logging Configuration
+For production, update appsettings.Production.json:
+json{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Warning",
+      "GitHubMCPServer": "Information"
+    },
+    "Console": {
+      "IncludeScopes": false,
+      "TimestampFormat": "yyyy-MM-dd HH:mm:ss "
+    }
+  }
+}
+14. Error Handling and Troubleshooting
+Common Issues and Solutions:
+
+Git Authentication Errors:
+
+Ensure your GitHub token has the correct permissions
+Check that the token hasn't expired
+
+
+Repository Not Found:
+
+Verify the repository name is correct
+Ensure you have access to the repository
+
+
+Build Failures:
+
+Make sure .NET SDK is installed on the system
+Check that all NuGet packages can be restored
+
+
+MCP Connection Issues:
+
+Verify the MCP server configuration in VS Code
+Check the server logs for any startup errors
+
+
+
+Debug Mode
+To run in debug mode with verbose logging:
+bashdotnet run --environment Development
+This comprehensive MCP server implementation provides all the functionality you requested and includes proper error handling, logging, and configuration management. The server integrates seamlessly with GitHub Copilot to provide a natural conversational interface for repository operations.
